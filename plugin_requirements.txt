@@ -1,0 +1,8 @@
+#netbox-secrets
+netbox-floorplan-plugin
+netbox-qrcode
+nextbox-ui-plugin
+netbox-plugin-dns
+netbox-documents
+netbox-inventory
+netbox_topology_views

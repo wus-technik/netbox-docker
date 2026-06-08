@@ -1,0 +1,10 @@
+FROM docker.io/netboxcommunity/netbox:v4.6.1-5.0.1
+
+RUN rm -rf /opt/netbox/netbox/local/release.yaml
+COPY ./plugin_requirements.txt /opt/netbox/
+RUN /usr/local/bin/uv pip install -r /opt/netbox/plugin_requirements.txt
+
+RUN mkdir -p /opt/netbox/netbox/static/netbox_topology_views/img
+COPY configuration/ /etc/netbox/config/
+RUN DEBUG="true" SECRET_KEY='r(m)9nLGnz$(_q3N4z1k(EFsMCjjjzx08x9VhNVcfd%6RF#r!6DE@+V5Zk2X' \
+    /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py collectstatic --no-input
