@@ -1,0 +1,121 @@
+# Example Portainer stack for deploying the custom GHCR image.
+# Intended for copy/paste into the Portainer UI after the GHCR workflow
+# has published ghcr.io/wus-technik/netbox-custom:latest.
+# Reuses the existing deployment paths under /var/lib/docker/compose/netbox.
+
+networks:
+  netbox:
+    driver: bridge
+
+x-common-netbox: &common-netbox
+  image: ghcr.io/wus-technik/netbox-custom:latest
+  env_file: stack.env
+  environment:
+    - REDIS_PORT=6380
+    - REDIS_CACHE_PORT=6381
+    - REMOTE_AUTH_ENABLED=true
+    - REMOTE_AUTH_BACKEND=social_core.backends.open_id_connect.OpenIdConnectAuth
+    - SOCIAL_AUTH_OIDC_OIDC_ENDPOINT=https://sso.wus-technik.com/application/o/netbox/
+    - SOCIAL_AUTH_OIDC_SCOPE=openid profile email roles
+    - LOGOUT_REDIRECT_URL=https://sso.wus-technik.com/application/o/netbox/end-session/
+  user: "root:root"
+  healthcheck:
+    test: curl -f http://localhost:8080/login/ || exit 1
+    start_period: 90s
+    timeout: 3s
+    interval: 15s
+  volumes:
+    - /var/lib/docker/compose/netbox/volumes/netbox_netbox-media-files:/opt/netbox/netbox/media:rw
+    - /var/lib/docker/compose/netbox/volumes/netbox_netbox-reports-files:/opt/netbox/netbox/reports:rw
+    - /var/lib/docker/compose/netbox/volumes/netbox_netbox-scripts-files:/opt/netbox/netbox/scripts:rw
+  networks:
+    netbox:
+  dns:
+    - "10.1.15.214"
+
+services:
+  netbox:
+    <<: *common-netbox
+    container_name: netbox
+    depends_on:
+      - postgres
+      - redis
+      - redis-cache
+    ports:
+      - 19444:8080
+
+  netbox-worker:
+    <<: *common-netbox
+    container_name: netbox-worker
+    depends_on:
+      netbox:
+        condition: service_healthy
+    command:
+      - /opt/netbox/venv/bin/python
+      - /opt/netbox/netbox/manage.py
+      - rqworker
+    healthcheck:
+      test: ps -aux | grep -v grep | grep -q rqworker || exit 1
+      start_period: 20s
+      timeout: 3s
+      interval: 15s
+
+  postgres:
+    image: ghcr.io/tiredofit/docker-postgres:17-latest
+    container_name: netbox-postgres
+    healthcheck:
+      test: pg_isready -q -t 2 -d $$DB_NAME -U $$DB_USER
+      start_period: 20s
+      timeout: 30s
+      interval: 10s
+      retries: 5
+    env_file: stack.env
+    environment:
+      - CREATE_DB=FALSE
+      - DATA_PATH=/var/lib/postgresql/data
+      - PGDATA=/var/lib/postgresql/data
+    volumes:
+      - /var/lib/docker/compose/netbox/volumes/netbox_netbox-postgres-data:/var/lib/postgresql/data
+      - /var/lib/docker/compose/netbox/postgres-logs:/logs
+    networks:
+      netbox:
+
+  redis:
+    image: tiredofit/valkey:latest
+    container_name: netbox-redis
+    command:
+      - sh
+      - -c
+      - valkey-server --appendonly yes --requirepass $$REDIS_PASSWORD
+    healthcheck:
+      test: '[ $$(valkey-cli --pass "$${REDIS_PASSWORD}" ping) = ''PONG'' ]'
+      start_period: 5s
+      timeout: 3s
+      interval: 1s
+      retries: 5
+    env_file: stack.env
+    environment:
+      - ENABLE_LOGS=FALSE
+      - VALKEY_PORT=6380
+    networks:
+      netbox:
+
+  redis-cache:
+    image: tiredofit/valkey:latest
+    container_name: netbox-redis-cache
+    command:
+      - sh
+      - -c
+      - valkey-server --requirepass $$REDIS_CACHE_PASSWORD
+    healthcheck:
+      test: '[ $$(valkey-cli --pass "$${REDIS_CACHE_PASSWORD}" ping) = ''PONG'' ]'
+      start_period: 5s
+      timeout: 3s
+      interval: 1s
+      retries: 5
+    env_file: stack.env
+    environment:
+      - ENABLE_LOGS=FALSE
+      - VALKEY_PORT=6381
+    networks:
+      netbox:
